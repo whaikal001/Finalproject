@@ -5,32 +5,88 @@ import '../models/task.dart';
 import '../models/submission.dart';
 
 class ApiService {
-
   static const String _baseUrl = 'http://localhost/php_backend/'; 
+
+  // Add a GET method for retrieving data
+  static Future<Map<String, dynamic>> _get(String endpoint, {Map<String, String>? params}) async {
+    Uri uri = Uri.parse('$_baseUrl$endpoint');
+    
+    // Add query parameters if provided
+    if (params != null && params.isNotEmpty) {
+      uri = uri.replace(queryParameters: params);
+    }
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      );
+
+      print('GET Response status: ${response.statusCode}');
+      print('GET Response headers: ${response.headers}');
+      print('GET Response body: ${response.body}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (response.body.isEmpty) {
+          return {"message": "Success with no content"};
+        }
+        
+        // Check content type
+        final contentType = response.headers['content-type'];
+        if (contentType == null || !contentType.toLowerCase().contains('application/json')) {
+          throw Exception('Server returned non-JSON response. Content-Type: $contentType. Body: ${response.body}');
+        }
+        
+        return json.decode(response.body);
+      } else {
+        // Try to parse error response
+        try {
+          final errorResponse = json.decode(response.body);
+          throw Exception(errorResponse['message'] ?? 'API error: ${response.statusCode} ${response.reasonPhrase}');
+        } catch (e) {
+          throw Exception('HTTP error: ${response.statusCode} ${response.reasonPhrase}. Body: ${response.body}');
+        }
+      }
+    } catch (e) {
+      print('Network error in _get: $e');
+      throw Exception('Network error: $e');
+    }
+  }
 
   static Future<Map<String, dynamic>> _post(String endpoint, Map<String, dynamic> data) async {
     final uri = Uri.parse('$_baseUrl$endpoint');
     try {
       final response = await http.post(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
         body: json.encode(data),
       );
 
+      print('POST Response status: ${response.statusCode}');
+      print('POST Response headers: ${response.headers}');
+      print('POST Response body: ${response.body}');
      
       if (response.statusCode >= 200 && response.statusCode < 300) {
-       
         if (response.body.isEmpty) {
           return {"message": "Success with no content"};
         }
         return json.decode(response.body);
       } else {
-      
-        final errorResponse = json.decode(response.body);
-        throw Exception(errorResponse['message'] ?? 'API error: ${response.statusCode} ${response.reasonPhrase}');
+        try {
+          final errorResponse = json.decode(response.body);
+          throw Exception(errorResponse['message'] ?? 'API error: ${response.statusCode} ${response.reasonPhrase}');
+        } catch (e) {
+          throw Exception('HTTP error: ${response.statusCode} ${response.reasonPhrase}. Body: ${response.body}');
+        }
       }
     } catch (e) {
-     
+      print('Network error in _post: $e');
       throw Exception('Network error: $e');
     }
   }
@@ -59,13 +115,20 @@ class ApiService {
 
   // --- Task Management APIs ---
 
+  // Use POST method since your PHP backend only accepts POST requests
   static Future<List<Task>> getWorkerTasks(int workerId) async {
-    final response = await _post('get_work.php', {'worker_id': workerId});
-    if (response['tasks'] != null) {
-      final List<dynamic> taskList = response['tasks'];
-      return taskList.map((json) => Task.fromJson(json)).toList();
+    try {
+      final response = await _post('get_work.php', {'worker_id': workerId});
+      
+      if (response['tasks'] != null) {
+        final List<dynamic> taskList = response['tasks'];
+        return taskList.map((json) => Task.fromJson(json)).toList();
+      }
+      return []; // Return empty list if no tasks
+    } catch (e) {
+      print('Error in getWorkerTasks: $e');
+      rethrow;
     }
-    return []; // Return empty list if no tasks or error
   }
 
   static Future<Map<String, dynamic>> submitWork(
@@ -102,14 +165,10 @@ class ApiService {
   static Future<Worker> getProfile(int workerId) async {
     final dynamic response = await _post('get_profile.php', {'worker_id': workerId});
 
-    // The PHP get_profile.php script returns a worker object directly on success.
-    // Ensure it's a Map<String, dynamic> before parsing.
     if (response is Map<String, dynamic>) {
-      // If the worker data is nested under a 'worker' key (e.g., from login_worker.php),
-      // or directly at the top level (e.g., from get_profile.php).
       if (response['worker'] != null && response['worker'] is Map<String, dynamic>) {
         return Worker.fromJson(response['worker'] as Map<String, dynamic>);
-      } else if (response['id'] != null) { // Assume it's the worker object itself if 'id' is present
+      } else if (response['id'] != null) {
         return Worker.fromJson(response);
       }
     }
@@ -118,9 +177,6 @@ class ApiService {
 
   static Future<Map<String, dynamic>> updateProfile(Worker worker) async {
     final Map<String, dynamic> data = worker.toJson();
-    // As per requirement, email is typically not editable via this update route for security.
-    // Ensure the 'email' field is not sent if it shouldn't be updated.
-    // The PHP script already handles dynamic updates based on provided fields.
     return await _post('update_profile.php', data);
   }
 
